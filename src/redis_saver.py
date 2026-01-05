@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
-from langgraph.checkpoint import BaseCheckpointSaver
-from langgraph.checkpoint import Checkpoint as LangGraphCheckpoint
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.base import Checkpoint as LangGraphCheckpoint
 
 from .state import TaskCheckpoint, TaskMetadata, TaskStatus
 
