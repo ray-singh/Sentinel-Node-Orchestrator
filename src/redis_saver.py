@@ -112,6 +112,9 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
         for key, value in data.items():
             if isinstance(value, datetime):
                 redis_data[key] = value.isoformat()
+            elif key == "status" and hasattr(value, "value"):
+                # Serialize enum as string value
+                redis_data[key] = value.value if hasattr(value, "value") else str(value)
             elif value is not None:
                 redis_data[key] = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
         
@@ -139,6 +142,10 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
         for key, value in data.items():
             key_str = key.decode() if isinstance(key, bytes) else key
             value_str = value.decode() if isinstance(value, bytes) else value
+            
+            # Skip empty strings for optional datetime fields
+            if key_str in ["lease_expires", "completed_at"] and value_str == "":
+                continue
             
             # Try to parse JSON for complex fields
             if key_str in ["task_params", "result"]:
