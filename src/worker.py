@@ -372,20 +372,72 @@ class AsyncWorker:
         # In production, this would call LangGraph node execution
         logger.info(f"Node {node_id} executing with inputs: {prev_outputs}")
         
-        # Simulate some async work
-        await asyncio.sleep(0.5)
+        # Call LLM for nodes that need it
+        outputs = {}
         
-        # Simulate LLM call with cost tracking
         if node_type in [NodeType.SEARCH, NodeType.ANALYZE, NodeType.SUMMARIZE]:
-            llm_metadata = await self._simulate_llm_call(node_id, meta)
+            # Enforce rate limit before LLM call
+            rate_limit_key = f"tenant:{meta.tenant_id}"
+            tokens_needed = 1.0  # 1 token per LLM call
             
-            # Track cost
-            cost = llm_metadata.cost_usd
-            new_total = await self.saver.increment_cost(checkpoint.task_id, cost)
-            checkpoint.cost_so_far = new_total
-            checkpoint.llm_calls.append(llm_metadata)
+            allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
+                rate_limit_key,
+                tokens=tokens_needed,
+            )
             
-            logger.info(f"LLM call cost: ${cost:.4f}, total: ${new_total:.2f}")
+            if not allowed:
+                logger.warning(
+                    f"Rate limit exceeded for tenant {meta.tenant_id}: "
+                    f"retry after {retry_after_ms}ms"
+                )
+                # Sleep and retry
+                await asyncio.sleep(retry_after_ms / 1000.0)
+                # Try again
+                allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
+                    rate_limit_key,
+                    tokens=tokens_needed,
+                )
+                if not allowed:
+                    raise RuntimeError(
+                        f"Rate limit still exceeded after retry for tenant {meta.tenant_id}"
+                    )
+            
+            logger.info(
+                f"Rate limit check passed: tenant={meta.tenant_id}, "
+                f"remaining={remaining:.2f} tokens"
+            )
+            
+            try:
+                # Real LLM call
+                outputs, llm_metadata = await self._call_llm(
+                    node_id,
+                    node_type,
+                    {"prev_outputs": prev_outputs, "query": meta.task_params.get("query", "")},
+                    meta
+                )
+                
+                # Track cost
+                cost = llm_metadata.cost_usd
+                new_total = await self.saver.increment_cost(checkpoint.task_id, cost)
+                checkpoint.cost_so_far = new_total
+                checkpoint.llm_calls.append(llm_metadata)
+                
+                logger.info(f"LLM call cost: ${cost:.4f}, total: ${new_total:.2f}")
+            
+            except Exception as e:
+                logger.warning(f"LLM call failed for {node_id}, using fallback: {e}")
+                # Fallback to simple output if LLM fails
+                outputs = {
+                    "result": f"Fallback output from {node_id}",
+                    "error": str(e),
+                }
+        else:
+            # Non-LLM nodes
+            await asyncio.sleep(0.3)
+            outputs = {
+                "result": f"Output from {node_id}",
+                "data": [1, 2, 3],
+            }
         
         completed_at = datetime.utcnow()
         
@@ -394,10 +446,7 @@ class AsyncWorker:
             node_id=node_id,
             node_type=node_type,
             inputs={"prev_outputs": prev_outputs},
-            outputs={
-                "result": f"Output from {node_id}",
-                "data": [1, 2, 3],
-            },
+            outputs=outputs,
             metadata={"execution_time_ms": (completed_at - started_at).total_seconds() * 1000},
             started_at=started_at,
             completed_at=completed_at,
@@ -405,37 +454,58 @@ class AsyncWorker:
         
         return node_state
     
-    async def _simulate_llm_call(
+    async def _call_llm(
         self,
         node_id: str,
+        node_type: NodeType,
+        inputs: Dict[str, Any],
         meta: TaskMetadata
-    ) -> LLMCallMetadata:
+    ) -> tuple[Dict[str, Any], LLMCallMetadata]:
         """
-        Simulate an LLM call with cost tracking.
+        Call LLM with real API integration.
         
-        In production, this would be replaced with actual LLM API calls
-        (OpenAI, Anthropic, etc.) via LangChain/LangGraph.
+        Constructs appropriate prompts based on node type and calls OpenAI.
         """
-        # Simulate API call
-        await asyncio.sleep(0.3)
+        from .llm import get_llm_client
         
-        # Mock token usage
-        prompt_tokens = 150
-        completion_tokens = 50
-        total_tokens = prompt_tokens + completion_tokens
+        llm_client = get_llm_client()
         
-        # Calculate cost (mock pricing)
-        cost_per_1k_tokens = 0.01  # $0.01 per 1K tokens
-        cost_usd = (total_tokens / 1000.0) * cost_per_1k_tokens
+        # Construct prompt based on node type
+        if node_type == NodeType.SEARCH:
+            prompt = f"Search and extract information about: {inputs.get('query', 'data')}"
+            system = "You are a research assistant that finds and extracts relevant information."
         
-        return LLMCallMetadata(
+        elif node_type == NodeType.ANALYZE:
+            data = inputs.get('prev_outputs', inputs.get('data', {}))
+            prompt = f"Analyze the following data and provide insights:\n\n{data}"
+            system = "You are an analytical assistant that identifies patterns and insights."
+        
+        elif node_type == NodeType.SUMMARIZE:
+            data = inputs.get('prev_outputs', inputs.get('data', {}))
+            prompt = f"Summarize the following analysis:\n\n{data}"
+            system = "You are a summarization assistant that creates concise summaries."
+        
+        else:
+            # Generic prompt
+            prompt = f"Process this task: {inputs}"
+            system = "You are a helpful assistant."
+        
+        # Call LLM
+        response, metadata = await llm_client.simple_prompt(
+            prompt=prompt,
+            system=system,
             model=settings.default_llm_model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            cost_usd=cost_usd,
-            latency_ms=300.0,
+            temperature=0.7,
+            max_tokens=500,
         )
+        
+        # Structure output
+        outputs = {
+            "llm_response": response,
+            "processed": True,
+        }
+        
+        return outputs, metadata
     
     async def run(self):
         """Main worker loop that claims and processes tasks."""

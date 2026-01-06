@@ -7,10 +7,12 @@ Sentinel ensures long-running, multi-step agent tasks survive worker crashes by 
 ## What this repo contains
 - `src/state.py` — Pydantic models for task metadata and checkpoints
 - `src/redis_saver.py` — Redis-backed checkpoint saver and atomic helper APIs
+- `src/rate_limiter.py` — **Token-bucket rate limiter with atomic Lua scripts**
 - `src/worker.py` — Async worker that claims tasks, executes nodes, checkpoints state, heartbeats and renews leases
 - `src/watcher.py` — Watcher service that detects dead workers and requeues tasks
 - `src/api.py` — FastAPI controller to create and manage tasks
-- `examples/` — runnable demos: checkpoint, worker, watcher, API demos
+- `src/llm.py` — **OpenAI integration with automatic cost tracking**
+- `examples/` — runnable demos: checkpoint, worker, watcher, API, LLM, rate limit demos
 - `tests/` — pytest async tests for schemas and Redis saver
 - `requirements.txt` and `.env.example`
 
@@ -29,13 +31,21 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Start Redis (Docker):
+3. Set up OpenAI API key (required for LLM integration):
+
+```bash
+export OPENAI_API_KEY='your-api-key-here'
+# Or create .env file:
+echo "OPENAI_API_KEY=your-api-key-here" > .env
+```
+
+4. Start Redis (Docker):
 
 ```bash
 docker run -d -p 6379:6379 redis:7-alpine
 ```
 
-4. Run components (each in its own terminal):
+5. Run components (each in its own terminal):
 
 - API server (accepts task submissions):
 
@@ -57,9 +67,19 @@ python3 examples/worker_demo.py     # multi-worker or single-task demos availabl
 python3 examples/watcher_demo.py
 ```
 
-5. Run the API demo (after API server is running):
+6. Run demos:
 
 ```bash
+# Rate limiting demo
+python3 -m examples.rate_limit_demo basic    # Basic token bucket
+python3 -m examples.rate_limit_demo tenant   # Multi-tenant limits
+python3 -m examples.rate_limit_demo burst    # Burst handling
+python3 -m examples.rate_limit_demo task     # Task execution with limits
+
+# LLM integration demo (requires OPENAI_API_KEY)
+python3 -m examples.llm_demo
+
+# API demo (requires API server running)
 python3 examples/api_demo.py
 ```
 
@@ -76,6 +96,7 @@ python3 examples/api_demo.py
 task:{id}:meta          # HASH - task metadata (status, owner, lease_expires, cost)
 task:{id}:checkpoint    # STRING - serialized checkpoint state (JSON)
 worker:{id}:hb          # STRING - worker heartbeat (with TTL)
+ratelimit:tenant:{id}   # HASH - token bucket state (tokens, last_refill)
 stream:events           # STREAM - lifecycle and audit events
 leases                  # ZSET - optional lease expiry index
 cost:tenant:{id}:{date} # HASH - per-tenant cost aggregates
@@ -88,11 +109,16 @@ cost:tenant:{id}:{date} # HASH - per-tenant cost aggregates
 - `DELETE /tasks/{task_id}` — cancel a queued/leased task
 - `GET /stats` — global task stats
 - `GET /tenants/{tenant_id}/costs` — tenant cost summary
+- `GET /tenants/{tenant_id}/rate-limit` — get tenant rate limit status
+- `POST /tenants/{tenant_id}/rate-limit` — set custom rate limit capacity/refill
+- `DELETE /tenants/{tenant_id}/rate-limit` — reset tenant rate limit
 
 See `src/api.py` for full request/response models.
 
 ## Demos
-- `examples/checkpoint_demo.py` — simple checkpoint save/load/resume flow
+- `examples/checkpoint_demo.py` — simple checkpoint save/lo
+- `examples/llm_demo.py` — OpenAI integration with cost tracking
+- `examples/rate_limit_demo.py` — token bucket rate limiting (basic, tenant, burst, task)ad/resume flow
 - `examples/worker_demo.py` — run workers to claim and process tasks
 - `examples/watcher_demo.py` — simulate worker crash and automatic requeue
 - `examples/api_demo.py` — exercises the FastAPI controller

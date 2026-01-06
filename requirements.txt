@@ -5,7 +5,8 @@ redis>=5.0.1
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
-# LangGraph and LangChain
+# LLM and AI
+openai>=1.12.0
 langgraph>=0.0.40
 langchain>=0.1.0
 langchain-openai>=0.0.5

@@ -12,6 +12,7 @@ import redis.asyncio as redis
 
 from .config import settings
 from .redis_saver import RedisCheckpointSaver
+from .rate_limiter import TokenBucketRateLimiter
 from .state import TaskMetadata, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -79,16 +80,25 @@ app = FastAPI(
 # Global state
 redis_client: Optional[redis.Redis] = None
 saver: Optional[RedisCheckpointSaver] = None
+rate_limiter: Optional[TokenBucketRateLimiter] = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize Redis connection on startup."""
-    global redis_client, saver
+    global redis_client, saver, rate_limiter
     
     logger.info("Starting FastAPI controller...")
     redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
     saver = RedisCheckpointSaver(redis_client)
+    
+    # Initialize rate limiter with decode_responses=True client
+    redis_decoded = await redis.from_url(settings.redis_url, decode_responses=True)
+    rate_limiter = TokenBucketRateLimiter(
+        redis=redis_decoded,
+        capacity=settings.default_rate_limit,
+        refill_rate=settings.rate_limit_refill_rate,
+    )
     logger.info("FastAPI controller started successfully")
 
 
@@ -326,6 +336,58 @@ async def get_tenant_costs(tenant_id: str):
         "total_cost_usd": round(total_cost, 4),
         "task_count": task_count,
         "average_cost_usd": round(total_cost / task_count, 4) if task_count > 0 else 0.0,
+    }
+
+
+@app.get("/tenants/{tenant_id}/rate-limit")
+async def get_tenant_rate_limit(tenant_id: str):
+    """Get rate limit status for a tenant."""
+    if not rate_limiter:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    
+    stats = await rate_limiter.get_stats(f"tenant:{tenant_id}")
+    
+    return {
+        "tenant_id": tenant_id,
+        **stats,
+    }
+
+
+@app.post("/tenants/{tenant_id}/rate-limit")
+async def set_tenant_rate_limit(
+    tenant_id: str,
+    capacity: float,
+    refill_rate: Optional[float] = None,
+):
+    """Set custom rate limit for a tenant."""
+    if not rate_limiter:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    
+    await rate_limiter.set_capacity(
+        f"tenant:{tenant_id}",
+        capacity=capacity,
+        refill_rate=refill_rate,
+    )
+    
+    return {
+        "tenant_id": tenant_id,
+        "capacity": capacity,
+        "refill_rate": refill_rate or settings.rate_limit_refill_rate,
+        "message": "Rate limit updated",
+    }
+
+
+@app.delete("/tenants/{tenant_id}/rate-limit")
+async def reset_tenant_rate_limit(tenant_id: str):
+    """Reset rate limit for a tenant."""
+    if not rate_limiter:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    
+    await rate_limiter.reset(f"tenant:{tenant_id}")
+    
+    return {
+        "tenant_id": tenant_id,
+        "message": "Rate limit reset",
     }
 
 

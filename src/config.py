@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     # LLM settings
     openai_api_key: str = ""
-    default_llm_model: str = "gpt-4-turbo-preview"
+    default_llm_model: str = "gpt-4o-mini"
     
     # Monitoring
     log_level: str = "INFO"
