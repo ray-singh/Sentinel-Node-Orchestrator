@@ -10,6 +10,10 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.base import Checkpoint as LangGraphCheckpoint
 
 from .state import TaskCheckpoint, TaskMetadata, TaskStatus
+from .metrics import CHECKPOINTS_SAVED, CHECKPOINTS_RESTORED
+from .security import encrypt_fields, decrypt_fields
+from .config import settings
+from .metrics import REQUEUES
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +58,14 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
         """
         checkpoint.updated_at = datetime.utcnow()
         
-        # Serialize checkpoint
+        # Serialize checkpoint (use JSON-friendly dump to avoid datetime objects)
         checkpoint_key = f"task:{task_id}:checkpoint"
-        checkpoint_data = checkpoint.model_dump_json()
+        data = checkpoint.model_dump(mode="json")
+
+        # Encrypt sensitive fields if enabled
+        data = encrypt_fields(data, settings.sensitive_checkpoint_fields)
+
+        checkpoint_data = json.dumps(data)
         
         async with self.redis.pipeline(transaction=True) as pipe:
             # Save checkpoint with TTL
@@ -75,6 +84,10 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
             await pipe.execute()
         
         logger.info(f"Saved checkpoint for task {task_id} at node {checkpoint.current_node}")
+        try:
+            CHECKPOINTS_SAVED.inc()
+        except Exception:
+            pass
     
     async def load_checkpoint(self, task_id: str) -> Optional[TaskCheckpoint]:
         """
@@ -93,8 +106,19 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
             logger.warning(f"No checkpoint found for task {task_id}")
             return None
         
-        checkpoint = TaskCheckpoint.model_validate_json(data)
+        # Decrypt sensitive fields if encrypted
+        try:
+            parsed = json.loads(data)
+            parsed = decrypt_fields(parsed, settings.sensitive_checkpoint_fields)
+            checkpoint = TaskCheckpoint.model_validate(parsed)
+        except Exception:
+            # Fallback to direct validation
+            checkpoint = TaskCheckpoint.model_validate_json(data)
         logger.info(f"Loaded checkpoint for task {task_id} at node {checkpoint.current_node}")
+        try:
+            CHECKPOINTS_RESTORED.inc()
+        except Exception:
+            pass
         return checkpoint
     
     async def save_task_metadata(self, metadata: TaskMetadata) -> None:
@@ -302,6 +326,10 @@ class RedisCheckpointSaver(BaseCheckpointSaver):
                             task_id = key.decode().split(":")[1]
                             await self.release_task(task_id, TaskStatus.QUEUED)
                             cleaned += 1
+                            try:
+                                REQUEUES.inc()
+                            except Exception:
+                                pass
                             logger.warning(f"Cleaned up expired lease for task {task_id}")
                     except (ValueError, IndexError):
                         pass

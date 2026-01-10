@@ -13,7 +13,7 @@ from src.state import (
 from src.redis_saver import create_redis_saver
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 async def saver():
     redis_url = os.getenv("TEST_REDIS_URL", "redis://localhost:6379")
     saver = await create_redis_saver(redis_url)
@@ -22,7 +22,10 @@ async def saver():
     try:
         await saver.redis.flushdb()
     finally:
-        await saver.redis.close()
+        try:
+            await saver.redis.aclose()
+        except AttributeError:
+            await saver.redis.close()
 
 
 @pytest.mark.asyncio

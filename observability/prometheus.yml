@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'sentinel-orchestrator'
+    environment: 'development'
+
+scrape_configs:
+  - job_name: 'sentinel-api'
+    static_configs:
+      - targets: ['host.docker.internal:9091']
+        labels:
+          service: 'api'
+    
+  - job_name: 'sentinel-workers'
+    static_configs:
+      - targets: ['host.docker.internal:9091']
+        labels:
+          service: 'worker'
+    
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -14,6 +14,7 @@ from .config import settings
 from .redis_saver import RedisCheckpointSaver
 from .rate_limiter import TokenBucketRateLimiter
 from .state import TaskMetadata, TaskStatus
+from . import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 class CreateTaskRequest(BaseModel):
     """Request to create a new task."""
     task_type: str = Field(..., description="Type of task to execute")
+    agent_type: Optional[str] = Field("prompt-based", description="Agent implementation to use for this task")
     task_params: Dict[str, Any] = Field(default_factory=dict, description="Task parameters")
     tenant_id: str = Field(..., description="Tenant identifier for cost tracking")
     cost_limit: Optional[float] = Field(None, description="Maximum cost in USD")
@@ -33,6 +35,7 @@ class TaskResponse(BaseModel):
     task_id: str
     status: str
     tenant_id: str
+    agent_type: str
     task_type: str
     task_params: Dict[str, Any]
     cost_so_far: float
@@ -99,6 +102,22 @@ async def startup_event():
         capacity=settings.default_rate_limit,
         refill_rate=settings.rate_limit_refill_rate,
     )
+    
+    # Initialize OpenTelemetry tracing
+    try:
+        from .tracing import setup_tracing, instrument_fastapi
+        setup_tracing(service_name="sentinel-api", service_version="0.1.0")
+        instrument_fastapi(app)
+        logger.info("OpenTelemetry tracing initialized")
+    except Exception:
+        logger.warning("OpenTelemetry tracing not available", exc_info=True)
+    
+    # Start Prometheus metrics server if enabled
+    if settings.enable_metrics:
+        try:
+            _metrics.start(settings.prometheus_port)
+        except Exception:
+            logger.exception("Failed to start metrics server")
     logger.info("FastAPI controller started successfully")
 
 
@@ -147,6 +166,7 @@ async def create_task(request: CreateTaskRequest):
         task_id=task_id,
         status=TaskStatus.QUEUED,
         tenant_id=request.tenant_id,
+        agent_type=request.agent_type or "prompt-based",
         task_type=request.task_type,
         task_params=request.task_params,
         cost_limit=request.cost_limit or settings.default_cost_limit,
@@ -397,6 +417,7 @@ def _metadata_to_response(metadata: TaskMetadata) -> TaskResponse:
         task_id=metadata.task_id,
         status=metadata.status.value,
         tenant_id=metadata.tenant_id,
+        agent_type=metadata.agent_type,
         task_type=metadata.task_type,
         task_params=metadata.task_params,
         cost_so_far=metadata.cost_so_far,

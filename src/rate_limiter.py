@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime
 
 from redis.asyncio import Redis
+from .metrics import RATE_LIMIT_HITS
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,10 @@ class TokenBucketRateLimiter:
                     f"requested={tokens}, remaining={tokens_remaining:.2f}, "
                     f"retry_after={retry_after_ms}ms"
                 )
+                try:
+                    RATE_LIMIT_HITS.inc()
+                except Exception:
+                    pass
             
             return allowed, tokens_remaining, retry_after_ms
         

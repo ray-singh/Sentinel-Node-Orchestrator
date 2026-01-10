@@ -1,5 +1,7 @@
 """Configuration settings for Sentinel Node Orchestrator."""
 
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -31,10 +33,16 @@ class Settings(BaseSettings):
     # Monitoring
     log_level: str = "INFO"
     enable_metrics: bool = True
+    prometheus_port: int = 8001
+
+    # Checkpoint encryption
+    checkpoint_encryption_key: Optional[str] = None  # base64 urlsafe key for Fernet
+    sensitive_checkpoint_fields: list[str] = ["task_params", "agent_state", "artifact_refs"]
     
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore extra fields from .env
 
 
 # Global settings instance

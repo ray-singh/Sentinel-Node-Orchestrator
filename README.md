@@ -5,14 +5,16 @@ High-availability, distributed AI agent orchestration system that closes the rel
 Sentinel ensures long-running, multi-step agent tasks survive worker crashes by checkpointing execution state to Redis and allowing other workers to resume from the last saved step. It also tracks LLM cost per call and provides primitives for rate-limiting.
 
 ## What this repo contains
-- `src/state.py` — Pydantic models for task metadata and checkpoints
+- `src/state.py` — Pydantic models for task metadata and checkpoints with versioning
 - `src/redis_saver.py` — Redis-backed checkpoint saver and atomic helper APIs
 - `src/rate_limiter.py` — **Token-bucket rate limiter with atomic Lua scripts**
+- `src/agent.py` — **Agent abstraction layer for pluggable agent implementations**
+- `src/langgraph_adapter.py` — **LangGraph checkpoint adapter for graph-based agent execution with resume**
 - `src/worker.py` — Async worker that claims tasks, executes nodes, checkpoints state, heartbeats and renews leases
 - `src/watcher.py` — Watcher service that detects dead workers and requeues tasks
 - `src/api.py` — FastAPI controller to create and manage tasks
 - `src/llm.py` — **OpenAI integration with automatic cost tracking**
-- `examples/` — runnable demos: checkpoint, worker, watcher, API, LLM, rate limit demos
+- `examples/` — runnable demos: checkpoint, worker, watcher, API, LLM, rate limit, agent, LangGraph demos
 - `tests/` — pytest async tests for schemas and Redis saver
 - `requirements.txt` and `.env.example`
 
@@ -79,6 +81,12 @@ python3 -m examples.rate_limit_demo task     # Task execution with limits
 # LLM integration demo (requires OPENAI_API_KEY)
 python3 -m examples.llm_demo
 
+# Agent demos
+python3 examples/agent_demo.py           # Agent abstraction with custom implementations
+python3 examples/langgraph_demo.py adapter     # LangGraph checkpoint adapter
+python3 examples/langgraph_demo.py basic       # Basic LangGraph execution (requires OPENAI_API_KEY)
+python3 examples/langgraph_demo.py checkpoint  # Checkpoint resume demo (requires OPENAI_API_KEY)
+
 # API demo (requires API server running)
 python3 examples/api_demo.py
 ```
@@ -115,13 +123,62 @@ cost:tenant:{id}:{date} # HASH - per-tenant cost aggregates
 
 See `src/api.py` for full request/response models.
 
+## Observability
+
+Sentinel includes comprehensive observability with OpenTelemetry tracing and Prometheus metrics.
+
+### Quick Start
+
+```bash
+# Start observability stack (Prometheus, Grafana, Jaeger)
+docker-compose -f docker-compose.observability.yml up -d
+
+# Access dashboards:
+# - Grafana: http://localhost:3000 (admin/admin)
+# - Prometheus: http://localhost:9090
+# - Jaeger: http://localhost:16686
+```
+
+### Key Metrics
+
+**Task Metrics** (by tenant, agent, task type):
+- `sentinel_tasks_started_total`, `sentinel_tasks_completed_total`, `sentinel_tasks_failed_total`
+- `sentinel_task_duration_seconds` - Task execution time histogram
+
+**LLM Metrics** (by model, tenant):
+- `sentinel_llm_calls_total` - Total LLM API calls
+- `sentinel_llm_tokens_total` - Token usage (prompt/completion)
+- `sentinel_llm_cost_usd_total` - Cumulative costs
+- `sentinel_llm_latency_seconds` - Call latency histogram
+
+**Node Metrics** (by node type, status):
+- `sentinel_node_executions_total` - Node executions (success/error)
+- `sentinel_node_duration_seconds` - Execution duration
+
+**Infrastructure**:
+- `sentinel_active_workers` - Active worker count
+- `sentinel_rate_limit_hits_total` - Rate limit violations
+- `sentinel_checkpoints_saved_total` - Checkpoint operations
+
+### Distributed Tracing
+
+All operations are automatically traced with OpenTelemetry:
+- FastAPI endpoints with request context
+- Redis operations
+- Task and node execution spans
+- LLM calls with token/cost attributes
+
+See [docs/observability.md](docs/observability.md) for detailed configuration.
+
 ## Demos
-- `examples/checkpoint_demo.py` — simple checkpoint save/lo
-- `examples/llm_demo.py` — OpenAI integration with cost tracking
-- `examples/rate_limit_demo.py` — token bucket rate limiting (basic, tenant, burst, task)ad/resume flow
+- `examples/checkpoint_demo.py` — simple checkpoint save/load/resume flow
 - `examples/worker_demo.py` — run workers to claim and process tasks
 - `examples/watcher_demo.py` — simulate worker crash and automatic requeue
 - `examples/api_demo.py` — exercises the FastAPI controller
+- `examples/llm_demo.py` — OpenAI integration with cost tracking
+- `examples/rate_limit_demo.py` — token bucket rate limiting (basic, tenant, burst, task)
+- `examples/agent_demo.py` — **agent abstraction with custom implementations**
+- `examples/langgraph_demo.py` — **LangGraph agent execution with checkpoint resume**
 
 ## Testing
 
@@ -133,10 +190,13 @@ pytest -q
 ```
 
 ## Next steps / roadmap
-- Rate-limiting (Redis token-bucket) and tenant quotas
+- ✅ **OpenTelemetry tracing and Prometheus metrics** - Comprehensive observability
+- ✅ Rate-limiting (Redis token-bucket) and tenant quotas
+- ✅ LangGraph integration with checkpoint resume
 - Kubernetes manifests for scalable deployment
-- Prometheus metrics and tracing
+- Replace SCAN with Redis Streams for task queue (XREADGROUP)
 - CI with Redis test fixture (or fakeredis)
+- Web UI with DAG visualizer
 
 ## License
 MIT

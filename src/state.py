@@ -67,6 +67,14 @@ class TaskCheckpoint(BaseModel):
     # Artifacts (external references)
     artifact_refs: Dict[str, str] = Field(default_factory=dict)  # key -> S3/MinIO URI
     
+    # Versioning and agent metadata
+    checkpoint_version: str = "1.0"
+    agent_type: str = "prompt-based"  # Agent type that created this checkpoint
+    agent_state: Optional[Dict[str, Any]] = None  # Agent-specific state
+    # Agent implementation versioning
+    agent_version: Optional[str] = None
+    agent_schema_version: Optional[str] = None
+    
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -99,6 +107,8 @@ class TaskMetadata(BaseModel):
     
     # Task definition
     task_type: str
+    # Agent selection for this task (e.g. 'prompt-based', 'langgraph')
+    agent_type: str = "prompt-based"
     task_params: Dict[str, Any] = Field(default_factory=dict)
     
     # Timestamps

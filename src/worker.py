@@ -12,6 +12,8 @@ import redis.asyncio as redis
 
 from .config import settings
 from .redis_saver import RedisCheckpointSaver
+from .rate_limiter import TokenBucketRateLimiter
+from .agent import Agent, create_agent
 from .state import (
     NodeState,
     NodeType,
@@ -21,6 +23,10 @@ from .state import (
     WorkerHeartbeat,
     LLMCallMetadata,
 )
+from .effects import SideEffectManager
+from .retry import retry_async
+from .events import emit_event
+from .tracing import add_span_attributes, add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,8 @@ class AsyncWorker:
         redis_url: Optional[str] = None,
         heartbeat_interval: int = None,
         lease_duration: int = None,
+        agent: Optional[Agent] = None,
+        agent_type: str = "prompt-based",
     ):
         """
         Initialize async worker.
@@ -53,14 +61,20 @@ class AsyncWorker:
             redis_url: Redis connection URL
             heartbeat_interval: Seconds between heartbeats
             lease_duration: Task lease duration in seconds
+            agent: Agent instance (or will create based on agent_type)
+            agent_type: Type of agent to create if agent not provided
         """
         self.worker_id = worker_id or settings.worker_id or f"worker-{os.getpid()}"
         self.redis_url = redis_url or settings.redis_url
         self.heartbeat_interval = heartbeat_interval or settings.worker_heartbeat_interval
         self.lease_duration = lease_duration or settings.lease_duration
         
+        # Agent for task execution
+        self.agent = agent or create_agent(agent_type)
+        
         self.redis_client: Optional[redis.Redis] = None
         self.saver: Optional[RedisCheckpointSaver] = None
+        self.rate_limiter: Optional[TokenBucketRateLimiter] = None
         self.running = False
         self.current_task_id: Optional[str] = None
         
@@ -72,7 +86,10 @@ class AsyncWorker:
         self.pid = os.getpid()
         self.started_at = datetime.utcnow()
         
-        logger.info(f"Worker {self.worker_id} initialized on {self.hostname}")
+        logger.info(
+            f"Worker {self.worker_id} initialized on {self.hostname} "
+            f"with agent type: {self.agent.agent_type}"
+        )
     
     async def start(self):
         """Start the worker and background tasks."""
@@ -81,6 +98,14 @@ class AsyncWorker:
         # Connect to Redis
         self.redis_client = await redis.from_url(self.redis_url, decode_responses=False)
         self.saver = RedisCheckpointSaver(self.redis_client)
+        
+        # Initialize rate limiter with decode_responses=True client
+        redis_decoded = await redis.from_url(self.redis_url, decode_responses=True)
+        self.rate_limiter = TokenBucketRateLimiter(
+            redis=redis_decoded,
+            capacity=settings.default_rate_limit,
+            refill_rate=settings.rate_limit_refill_rate,
+        )
         
         self.running = True
         
@@ -214,11 +239,50 @@ class AsyncWorker:
         self.current_task_id = task_id
         
         try:
+            # Add tracing attributes
+            try:
+                add_span_attributes(
+                    task_id=task_id,
+                    worker_id=self.worker_id
+                )
+            except Exception:
+                pass
+            
+            try:
+                from .metrics import TASKS_STARTED, TASKS_COMPLETED, TASKS_FAILED
+            except Exception:
+                TASKS_STARTED = TASKS_COMPLETED = TASKS_FAILED = None
+            if TASKS_STARTED:
+                # Load metadata first to get labels
+                meta_temp = await self.saver.load_task_metadata(task_id)
+                if meta_temp:
+                    TASKS_STARTED.labels(
+                        tenant_id=meta_temp.tenant_id,
+                        agent_type=meta_temp.agent_type,
+                        task_type=meta_temp.task_type
+                    ).inc()
             # Load task metadata
             meta = await self.saver.load_task_metadata(task_id)
             if not meta:
                 logger.error(f"Task {task_id} metadata not found")
                 return
+            
+            # Add more tracing attributes
+            try:
+                add_span_attributes(
+                    tenant_id=meta.tenant_id,
+                    agent_type=meta.agent_type,
+                    task_type=meta.task_type
+                )
+            except Exception:
+                pass
+            
+            # Instantiate agent for this task based on metadata
+            # Save old agent to restore later
+            old_agent = self.agent
+            try:
+                self.agent = create_agent(meta.agent_type)
+                await self.agent.initialize(meta)
             
             # Check for existing checkpoint (resume scenario)
             checkpoint = await self.saver.load_checkpoint(task_id)
@@ -235,7 +299,16 @@ class AsyncWorker:
             meta.completed_at = datetime.utcnow()
             meta.result = {"status": "success", "message": "Task completed"}
             await self.saver.save_task_metadata(meta)
-            
+            try:
+                if TASKS_COMPLETED:
+                    TASKS_COMPLETED.labels(
+                        tenant_id=meta.tenant_id,
+                        agent_type=meta.agent_type,
+                        task_type=meta.task_type
+                    ).inc()
+                add_span_event("task_completed", {"task_id": task_id})
+            except Exception:
+                pass
             logger.info(f"Task {task_id} completed successfully")
         
         except Exception as e:
@@ -248,8 +321,26 @@ class AsyncWorker:
                 meta.error = str(e)
                 meta.attempts += 1
                 await self.saver.save_task_metadata(meta)
+                try:
+                    if TASKS_FAILED:
+                        TASKS_FAILED.labels(
+                            tenant_id=meta.tenant_id,
+                            agent_type=meta.agent_type,
+                            task_type=meta.task_type
+                        ).inc()
+                    add_span_event("task_failed", {"task_id": task_id, "error": str(e)})
+                except Exception:
+                    pass
         
         finally:
+            # Cleanup agent resources created for this task
+            try:
+                if self.agent:
+                    await self.agent.cleanup()
+            except Exception:
+                logger.exception("Error cleaning up agent")
+            # Restore previous agent (if any)
+            self.agent = old_agent
             self.current_task_id = None
     
     async def _execute_from_start(self, task_id: str, meta: TaskMetadata):
@@ -348,7 +439,7 @@ class AsyncWorker:
         meta: TaskMetadata
     ) -> NodeState:
         """
-        Execute a single node.
+        Execute a single node using the agent abstraction.
         
         Args:
             node_id: Node identifier
@@ -359,8 +450,6 @@ class AsyncWorker:
         Returns:
             NodeState with results
         """
-        started_at = datetime.utcnow()
-        
         # Get inputs from previous node
         prev_outputs = {}
         if checkpoint.node_history:
@@ -368,15 +457,17 @@ class AsyncWorker:
             if prev_node in checkpoint.node_states:
                 prev_outputs = checkpoint.node_states[prev_node].outputs
         
-        # Simulate node execution
-        # In production, this would call LangGraph node execution
+        inputs = {
+            "prev_outputs": prev_outputs,
+            "query": meta.task_params.get("query", ""),
+        }
+        task_id = checkpoint.task_id
+        started_at = datetime.utcnow()
+        
         logger.info(f"Node {node_id} executing with inputs: {prev_outputs}")
         
-        # Call LLM for nodes that need it
-        outputs = {}
-        
+        # For LLM nodes, enforce rate limit before execution
         if node_type in [NodeType.SEARCH, NodeType.ANALYZE, NodeType.SUMMARIZE]:
-            # Enforce rate limit before LLM call
             rate_limit_key = f"tenant:{meta.tenant_id}"
             tokens_needed = 1.0  # 1 token per LLM call
             
@@ -406,106 +497,151 @@ class AsyncWorker:
                 f"Rate limit check passed: tenant={meta.tenant_id}, "
                 f"remaining={remaining:.2f} tokens"
             )
+        
+        # Create SideEffectManager for idempotent external effects
+        effects_mgr = SideEffectManager(self.redis_client)
+
+        # Add tracing for node execution
+        try:
+            add_span_attributes(
+                node_id=node_id,
+                node_type=node_type.value,
+                task_id=task_id,
+                tenant_id=meta.tenant_id
+            )
+        except Exception:
+            pass
+
+        # Determine retry policy from task params or defaults
+        retry_cfg = meta.task_params.get("retry_policy", {}) if isinstance(meta.task_params, dict) else {}
+        retries = int(retry_cfg.get("retries", 3))
+        backoff = float(retry_cfg.get("backoff", 0.5))
+        factor = float(retry_cfg.get("factor", 2.0))
+        max_delay = float(retry_cfg.get("max_delay", 30.0))
+        jitter = float(retry_cfg.get("jitter", 0.1))
+
+        async def _call_agent():
+            return await self.agent.execute_node(
+                node_id=node_id,
+                node_type=node_type,
+                inputs=inputs,
+                metadata=meta,
+                effects=effects_mgr,
+            )
+
+        # Execute with retries/backoff
+        try:
+            node_state, llm_metadata = await retry_async(
+                _call_agent,
+                retries=retries,
+                backoff=backoff,
+                factor=factor,
+                max_delay=max_delay,
+                jitter=jitter,
+            )
             
+            # Emit node completion event
+            await emit_event(self.redis_client, "node_completed", {
+                "task_id": task_id,
+                "node_id": node_id,
+                "node_type": node_type.value,
+                "worker_id": self.worker_id,
+            })
+            
+            # Track node metrics
             try:
-                # Real LLM call
-                outputs, llm_metadata = await self._call_llm(
-                    node_id,
-                    node_type,
-                    {"prev_outputs": prev_outputs, "query": meta.task_params.get("query", "")},
-                    meta
-                )
-                
-                # Track cost
-                cost = llm_metadata.cost_usd
-                new_total = await self.saver.increment_cost(checkpoint.task_id, cost)
-                checkpoint.cost_so_far = new_total
-                checkpoint.llm_calls.append(llm_metadata)
-                
-                logger.info(f"LLM call cost: ${cost:.4f}, total: ${new_total:.2f}")
+                from .metrics import NODE_EXECUTIONS, NODE_DURATION
+                NODE_EXECUTIONS.labels(node_type=node_type.value, status="success").inc()
+                duration_s = (datetime.utcnow() - started_at).total_seconds()
+                NODE_DURATION.labels(node_type=node_type.value).observe(duration_s)
+                add_span_event("node_completed", {"node_id": node_id, "duration_s": duration_s})
+            except Exception:
+                pass
+
+        except Exception as e:
+            # Emit failure event and record error in node state
+            await emit_event(self.redis_client, "node_failed", {
+                "task_id": task_id,
+                "node_id": node_id,
+                "node_type": node_type.value,
+                "worker_id": self.worker_id,
+                "error": str(e),
+            })
             
-            except Exception as e:
-                logger.warning(f"LLM call failed for {node_id}, using fallback: {e}")
-                # Fallback to simple output if LLM fails
-                outputs = {
-                    "result": f"Fallback output from {node_id}",
-                    "error": str(e),
-                }
-        else:
-            # Non-LLM nodes
-            await asyncio.sleep(0.3)
-            outputs = {
-                "result": f"Output from {node_id}",
-                "data": [1, 2, 3],
-            }
+            # Track node error metrics
+            try:
+                from .metrics import NODE_EXECUTIONS
+                NODE_EXECUTIONS.labels(node_type=node_type.value, status="error").inc()
+                add_span_event("node_failed", {"node_id": node_id, "error": str(e)})
+            except Exception:
+                pass
+            
+            # Create error node state
+            completed_at = datetime.utcnow()
+            node_state = NodeState(
+                node_id=node_id,
+                node_type=node_type,
+                inputs=inputs,
+                outputs={"error": str(e), "processed": False},
+                metadata={"execution_time_ms": (completed_at - started_at).total_seconds() * 1000},
+                started_at=started_at,
+                completed_at=completed_at,
+                error=str(e),
+            )
+            llm_metadata = None
         
-        completed_at = datetime.utcnow()
-        
-        # Create node state
-        node_state = NodeState(
-            node_id=node_id,
-            node_type=node_type,
-            inputs={"prev_outputs": prev_outputs},
-            outputs=outputs,
-            metadata={"execution_time_ms": (completed_at - started_at).total_seconds() * 1000},
-            started_at=started_at,
-            completed_at=completed_at,
-        )
+        # Track LLM cost and persist any LLM call metadata returned by agent
+        # Collect all LLM call entries: those returned directly and any attached to node_state.metadata
+        llm_calls_list = []
+        if llm_metadata:
+            llm_calls_list.append(llm_metadata)
+
+        # Node state may contain a list of llm call dicts under metadata['llm_calls'] (LangGraph)
+        meta_calls = node_state.metadata.get("llm_calls") if isinstance(node_state.metadata, dict) else None
+        if meta_calls and isinstance(meta_calls, list):
+            for entry in meta_calls:
+                if isinstance(entry, LLMCallMetadata):
+                    llm_calls_list.append(entry)
+                elif isinstance(entry, dict):
+                    try:
+                        llm_calls_list.append(LLMCallMetadata.model_validate(entry))
+                    except Exception:
+                        try:
+                            # Fallback construction
+                            llm_calls_list.append(LLMCallMetadata(
+                                model=entry.get("model", self.agent.llm_client.default_model if hasattr(self.agent, 'llm_client') else ""),
+                                prompt_tokens=int(entry.get("prompt_tokens", 0) or 0),
+                                completion_tokens=int(entry.get("completion_tokens", 0) or 0),
+                                total_tokens=int(entry.get("total_tokens", 0) or 0),
+                                cost_usd=float(entry.get("cost_usd", 0.0) or 0.0),
+                                latency_ms=float(entry.get("latency_ms", 0.0) or 0.0),
+                            ))
+                        except Exception:
+                            # Skip malformed entries
+                            continue
+
+        # If we have any llm calls, increment cost once and append all to checkpoint
+        if llm_calls_list:
+            total_cost = 0.0
+            for call in llm_calls_list:
+                try:
+                    total_cost += float(call.cost_usd or 0.0)
+                except Exception:
+                    pass
+
+            if total_cost > 0:
+                new_total = await self.saver.increment_cost(checkpoint.task_id, total_cost)
+                checkpoint.cost_so_far = new_total
+            else:
+                new_total = checkpoint.cost_so_far
+
+            # Append validated metadata objects
+            for call in llm_calls_list:
+                checkpoint.llm_calls.append(call)
+
+            logger.info(f"LLM calls cost: ${total_cost:.4f}, total: ${new_total:.2f}")
         
         return node_state
-    
-    async def _call_llm(
-        self,
-        node_id: str,
-        node_type: NodeType,
-        inputs: Dict[str, Any],
-        meta: TaskMetadata
-    ) -> tuple[Dict[str, Any], LLMCallMetadata]:
-        """
-        Call LLM with real API integration.
-        
-        Constructs appropriate prompts based on node type and calls OpenAI.
-        """
-        from .llm import get_llm_client
-        
-        llm_client = get_llm_client()
-        
-        # Construct prompt based on node type
-        if node_type == NodeType.SEARCH:
-            prompt = f"Search and extract information about: {inputs.get('query', 'data')}"
-            system = "You are a research assistant that finds and extracts relevant information."
-        
-        elif node_type == NodeType.ANALYZE:
-            data = inputs.get('prev_outputs', inputs.get('data', {}))
-            prompt = f"Analyze the following data and provide insights:\n\n{data}"
-            system = "You are an analytical assistant that identifies patterns and insights."
-        
-        elif node_type == NodeType.SUMMARIZE:
-            data = inputs.get('prev_outputs', inputs.get('data', {}))
-            prompt = f"Summarize the following analysis:\n\n{data}"
-            system = "You are a summarization assistant that creates concise summaries."
-        
-        else:
-            # Generic prompt
-            prompt = f"Process this task: {inputs}"
-            system = "You are a helpful assistant."
-        
-        # Call LLM
-        response, metadata = await llm_client.simple_prompt(
-            prompt=prompt,
-            system=system,
-            model=settings.default_llm_model,
-            temperature=0.7,
-            max_tokens=500,
-        )
-        
-        # Structure output
-        outputs = {
-            "llm_response": response,
-            "processed": True,
-        }
-        
-        return outputs, metadata
     
     async def run(self):
         """Main worker loop that claims and processes tasks."""

@@ -1,0 +1,316 @@
+{
+  "dashboard": {
+    "title": "Sentinel Node Orchestrator",
+    "tags": ["sentinel", "ai", "orchestration"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Task Throughput (Tasks/sec)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_tasks_completed_total[5m])",
+            "legendFormat": "Completed - {{tenant_id}}"
+          },
+          {
+            "expr": "rate(sentinel_tasks_failed_total[5m])",
+            "legendFormat": "Failed - {{tenant_id}}"
+          },
+          {
+            "expr": "rate(sentinel_tasks_started_total[5m])",
+            "legendFormat": "Started - {{tenant_id}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Tasks/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Active Workers",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sentinel_active_workers"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Task Success Rate (%)",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "100 * sum(rate(sentinel_tasks_completed_total[5m])) / (sum(rate(sentinel_tasks_completed_total[5m])) + sum(rate(sentinel_tasks_failed_total[5m])))"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "unit": "percent"
+        }
+      },
+      {
+        "id": 4,
+        "title": "LLM Cost per Tenant (USD)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_llm_cost_usd_total[5m]) * 60",
+            "legendFormat": "{{tenant_id}} - {{model}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "custom": {
+              "fillOpacity": 10,
+              "lineWidth": 2
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "LLM Token Usage (Tokens/min)",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_llm_tokens_total{token_type=\"prompt\"}[5m]) * 60",
+            "legendFormat": "Prompt - {{tenant_id}} {{model}}"
+          },
+          {
+            "expr": "rate(sentinel_llm_tokens_total{token_type=\"completion\"}[5m]) * 60",
+            "legendFormat": "Completion - {{tenant_id}} {{model}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": {
+              "fillOpacity": 10,
+              "lineWidth": 2
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "LLM Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(sentinel_llm_latency_seconds_bucket[5m]))",
+            "legendFormat": "p50 - {{model}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(sentinel_llm_latency_seconds_bucket[5m]))",
+            "legendFormat": "p95 - {{model}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(sentinel_llm_latency_seconds_bucket[5m]))",
+            "legendFormat": "p99 - {{model}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Node Execution Duration (p50, p95)",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(sentinel_node_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50 - {{node_type}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(sentinel_node_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 - {{node_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Rate Limit Hits by Tenant",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_rate_limit_hits_total[5m])",
+            "legendFormat": "{{tenant_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Checkpoint Operations",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_checkpoints_saved_total[5m])",
+            "legendFormat": "Saved"
+          },
+          {
+            "expr": "rate(sentinel_checkpoints_restored_total[5m])",
+            "legendFormat": "Restored"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Node Executions by Type and Status",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_node_executions_total{status=\"success\"}[5m])",
+            "legendFormat": "Success - {{node_type}}"
+          },
+          {
+            "expr": "rate(sentinel_node_executions_total{status=\"error\"}[5m])",
+            "legendFormat": "Error - {{node_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "LLM Calls by Model",
+        "type": "piechart",
+        "gridPos": {"x": 12, "y": 32, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "sum by (model) (rate(sentinel_llm_calls_total[5m]))",
+            "legendFormat": "{{model}}"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Task Duration (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": {"x": 18, "y": 32, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(sentinel_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(sentinel_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(sentinel_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Worker Heartbeats",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 40, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_worker_heartbeats_total[5m])",
+            "legendFormat": "{{worker_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 14,
+        "title": "Requeues by Reason",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 40, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(sentinel_requeues_total[5m])",
+            "legendFormat": "{{reason}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 15,
+        "title": "Total Cost by Tenant (Cumulative)",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 48, "w": 24, "h": 4},
+        "targets": [
+          {
+            "expr": "sum by (tenant_id) (sentinel_llm_cost_usd_total)",
+            "legendFormat": "{{tenant_id}}"
+          }
+        ],
+        "options": {
+          "graphMode": "none",
+          "colorMode": "value",
+          "textMode": "value_and_name",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -7,6 +7,8 @@ from datetime import datetime
 
 from .config import settings
 from .state import LLMCallMetadata
+from .metrics import LLM_CALLS, LLM_TOKENS, LLM_LATENCY, LLM_COST
+from .tracing import add_span_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,7 @@ class LLMClient:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        tenant_id: Optional[str] = None,
         **kwargs
     ) -> tuple[str, LLMCallMetadata]:
         """
@@ -77,6 +80,7 @@ class LLMClient:
             model: Model name (overrides default)
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
+            tenant_id: Tenant ID for metrics labeling
             **kwargs: Additional API parameters
             
         Returns:
@@ -84,6 +88,17 @@ class LLMClient:
         """
         model = model or self.default_model
         client = self._get_client()
+        
+        # Add span attributes for tracing
+        try:
+            add_span_attributes(
+                llm_model=model,
+                llm_temperature=temperature,
+                llm_max_tokens=max_tokens or 0,
+                llm_message_count=len(messages)
+            )
+        except Exception:
+            pass  # Tracing not initialized
         
         start_time = time.time()
         
@@ -124,6 +139,26 @@ class LLMClient:
                 latency_ms=latency_ms,
             )
             
+            # Update metrics with labels
+            try:
+                tenant = tenant_id or "unknown"
+                LLM_CALLS.labels(model=model, tenant_id=tenant, node_type="chat").inc()
+                LLM_TOKENS.labels(model=model, tenant_id=tenant, token_type="prompt").inc(prompt_tokens)
+                LLM_TOKENS.labels(model=model, tenant_id=tenant, token_type="completion").inc(completion_tokens)
+                LLM_LATENCY.labels(model=model, tenant_id=tenant).observe(latency_ms / 1000.0)
+                LLM_COST.labels(model=model, tenant_id=tenant).inc(cost_usd)
+                
+                # Add tracing span attributes
+                add_span_attributes(
+                    llm_prompt_tokens=prompt_tokens,
+                    llm_completion_tokens=completion_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost_usd=cost_usd,
+                    llm_latency_ms=latency_ms
+                )
+            except Exception:
+                pass
+
             logger.info(
                 f"LLM call: {model}, tokens={total_tokens}, "
                 f"cost=${cost_usd:.4f}, latency={latency_ms:.0f}ms"
@@ -234,6 +269,14 @@ class LLMClient:
                 cost_usd=cost_usd,
                 latency_ms=latency_ms,
             )
+
+            # Metrics
+            try:
+                LLM_CALLS.inc()
+                LLM_TOKENS.inc(total_tokens)
+                LLM_LATENCY.observe(latency_ms / 1000.0)
+            except Exception:
+                pass
             
             logger.info(
                 f"Embeddings: {model}, {len(texts)} texts, "
