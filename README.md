@@ -4,6 +4,28 @@ High-availability, distributed AI agent orchestration system that closes the rel
 
 Sentinel ensures long-running, multi-step agent tasks survive worker crashes by checkpointing execution state to Redis and allowing other workers to resume from the last saved step. It also tracks LLM cost per call and provides primitives for rate-limiting.
 
+## 🚀 Quick Start
+
+**One-line setup (Docker):**
+
+```bash
+./start.sh
+```
+
+Or using Make:
+
+```bash
+make up && make demo
+```
+
+This starts the complete stack (Redis, API, Workers, Watcher, Prometheus, Grafana, Jaeger) and submits sample tasks.
+
+**Access the system:**
+- � **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- 🔍 **Jaeger Traces**: http://localhost:16686
+- 📈 **Prometheus**: http://localhost:9090
+- 🌐 **API Docs**: http://localhost:8000/docs
+
 ## What this repo contains
 - `src/state.py` — Pydantic models for task metadata and checkpoints with versioning
 - `src/redis_saver.py` — Redis-backed checkpoint saver and atomic helper APIs
@@ -18,7 +40,40 @@ Sentinel ensures long-running, multi-step agent tasks survive worker crashes by 
 - `tests/` — pytest async tests for schemas and Redis saver
 - `requirements.txt` and `.env.example`
 
-## Quickstart (local)
+## Quickstart
+
+### Docker (Recommended)
+
+Complete stack with one command:
+
+```bash
+# 1. Copy environment template
+cp .env.example .env
+
+# 2. Add your OpenAI API key to .env
+# Edit .env and set: OPENAI_API_KEY=sk-your-key-here
+
+# 3. Start all services
+docker-compose up -d
+```
+
+This starts:
+- Redis (state storage)
+- API server on http://localhost:8000
+- 2x Workers (task processors)
+- Watcher (failure detection)
+- Prometheus on http://localhost:9090
+- Grafana on http://localhost:3000 (admin/admin)
+- Jaeger on http://localhost:16686
+
+**Access:**
+- API docs: http://localhost:8000/docs
+- Grafana dashboard: http://localhost:3000
+- Jaeger traces: http://localhost:16686
+
+See [docs/docker-setup.md](docs/docker-setup.md) for detailed Docker guide.
+
+### Local Development (Python)
 
 1. Create and activate a virtualenv (macOS zsh):
 
@@ -52,8 +107,6 @@ docker run -d -p 6379:6379 redis:7-alpine
 - API server (accepts task submissions):
 
 ```bash
-python3 -m src.api
-# or with uvicorn:
 uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -69,27 +122,67 @@ python3 examples/worker_demo.py     # multi-worker or single-task demos availabl
 python3 examples/watcher_demo.py
 ```
 
-6. Run demos:
+## Demo & Development Commands
+
+### Using the Demo Script
+
+Submit sample tasks and watch progress:
 
 ```bash
-# Rate limiting demo
-python3 -m examples.rate_limit_demo basic    # Basic token bucket
-python3 -m examples.rate_limit_demo tenant   # Multi-tenant limits
-python3 -m examples.rate_limit_demo burst    # Burst handling
-python3 -m examples.rate_limit_demo task     # Task execution with limits
+# Submit 3 sample tasks
+python demo.py
 
-# LLM integration demo (requires OPENAI_API_KEY)
-python3 -m examples.llm_demo
+# Submit tasks and watch real-time progress
+python demo.py --watch
 
-# Agent demos
-python3 examples/agent_demo.py           # Agent abstraction with custom implementations
-python3 examples/langgraph_demo.py adapter     # LangGraph checkpoint adapter
-python3 examples/langgraph_demo.py basic       # Basic LangGraph execution (requires OPENAI_API_KEY)
-python3 examples/langgraph_demo.py checkpoint  # Checkpoint resume demo (requires OPENAI_API_KEY)
-
-# API demo (requires API server running)
-python3 examples/api_demo.py
+# Submit custom number of tasks
+python demo.py --count 5 --watch
 ```
+
+### Using Make Commands
+
+```bash
+# Quick commands
+make help         # Show all available commands
+make up           # Start all services
+make demo         # Run interactive demo
+make logs         # View all logs
+make status       # Show service status
+make down         # Stop all services
+
+# Development
+make test         # Run test suite
+make logs-api     # View API logs only
+make logs-workers # View worker logs
+make metrics      # Show current metrics
+
+# Monitoring
+make grafana      # Open Grafana dashboard
+make jaeger       # Open Jaeger traces
+make prometheus   # Open Prometheus UI
+```
+
+### Docker Compose Commands
+
+```bash
+# View logs
+docker-compose logs -f              # All services
+docker-compose logs -f api          # API only
+docker-compose logs -f worker-1     # Worker 1 only
+
+# Restart services
+docker-compose restart              # All services
+docker-compose restart worker-1     # Single service
+
+# Scale workers
+docker-compose up -d --scale worker-1=5
+
+# Stop and cleanup
+docker-compose down                 # Stop (keep data)
+docker-compose down -v              # Stop and remove volumes
+```
+
+See [docs/docker-setup.md](docs/docker-setup.md) for comprehensive Docker guide.
 
 ## Core Concepts (brief)
 - Tasks: submitted via the FastAPI controller and stored in Redis as `task:{id}:meta` (HASH)
