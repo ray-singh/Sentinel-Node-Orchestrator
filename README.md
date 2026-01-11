@@ -21,7 +21,8 @@ make up && make demo
 This starts the complete stack (Redis, API, Workers, Watcher, Prometheus, Grafana, Jaeger) and submits sample tasks.
 
 **Access the system:**
-- � **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- 📊 **Interactive Dashboard**: http://localhost:5175 (Architecture & Flow Diagrams)
+- 📈 **Grafana Dashboard**: http://localhost:3000 (admin/admin)
 - 🔍 **Jaeger Traces**: http://localhost:16686
 - 📈 **Prometheus**: http://localhost:9090
 - 🌐 **API Docs**: http://localhost:8000/docs
@@ -36,6 +37,7 @@ This starts the complete stack (Redis, API, Workers, Watcher, Prometheus, Grafan
 - `src/watcher.py` — Watcher service that detects dead workers and requeues tasks
 - `src/api.py` — FastAPI controller to create and manage tasks
 - `src/llm.py` — **OpenAI integration with automatic cost tracking**
+- `web-preview/` — **React dashboard with interactive architecture, sequence, and state machine diagrams**
 - `examples/` — runnable demos: checkpoint, worker, watcher, API, LLM, rate limit, agent, LangGraph demos
 - `tests/` — pytest async tests for schemas and Redis saver
 - `requirements.txt` and `.env.example`
@@ -263,6 +265,33 @@ All operations are automatically traced with OpenTelemetry:
 
 See [docs/observability.md](docs/observability.md) for detailed configuration.
 
+## Interactive Dashboard
+
+The system includes a React-based interactive dashboard with visual diagrams:
+
+### Running the Dashboard
+
+```bash
+# Navigate to web-preview directory
+cd web-preview
+
+# Install dependencies (first time only)
+npm install
+
+# Start dev server
+npm run dev
+```
+
+The dashboard will be available at http://localhost:5173 (or 5174/5175 if port is in use).
+
+### Dashboard Features
+
+- **Architecture Diagram**: Visual representation of FastAPI, Redis, Workers, and Watcher
+- **Sequence Diagram**: Step-by-step interaction flow between components
+- **State Machine**: Interactive task lifecycle visualization (SUBMITTED → CLAIMED → EXECUTING → CHECKPOINT → COMPLETED)
+- **Key Metrics**: System performance, reliability, and cost control statistics
+- **Observability Stack**: OpenTelemetry, Prometheus, and Grafana integration details
+
 ## Demos
 - `examples/checkpoint_demo.py` — simple checkpoint save/load/resume flow
 - `examples/worker_demo.py` — run workers to claim and process tasks
@@ -284,12 +313,12 @@ pytest -q
 
 ## Next steps / roadmap
 - ✅ **OpenTelemetry tracing and Prometheus metrics** - Comprehensive observability
+- ✅ **Interactive React dashboard** - Visual architecture and flow diagrams
 - ✅ Rate-limiting (Redis token-bucket) and tenant quotas
 - ✅ LangGraph integration with checkpoint resume
 - Kubernetes manifests for scalable deployment
 - Replace SCAN with Redis Streams for task queue (XREADGROUP)
 - CI with Redis test fixture (or fakeredis)
-- Web UI with DAG visualizer
 
 ## License
 MIT

@@ -536,7 +536,6 @@ const SentinelDiagram = () => {
         {/* Footer */}
         <div className="mt-8 text-center text-slate-400 text-sm">
           <p>Built with Python, Redis, FastAPI, LangGraph, OpenTelemetry, Prometheus, Grafana</p>
-          <p className="mt-2">Hover over state machine states for details</p>
         </div>
       </div>
     </div>
