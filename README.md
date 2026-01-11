@@ -311,15 +311,6 @@ docker run -d -p 6379:6379 redis:7-alpine
 pytest -q
 ```
 
-## Next steps / roadmap
-- ✅ **OpenTelemetry tracing and Prometheus metrics** - Comprehensive observability
-- ✅ **Interactive React dashboard** - Visual architecture and flow diagrams
-- ✅ Rate-limiting (Redis token-bucket) and tenant quotas
-- ✅ LangGraph integration with checkpoint resume
-- Kubernetes manifests for scalable deployment
-- Replace SCAN with Redis Streams for task queue (XREADGROUP)
-- CI with Redis test fixture (or fakeredis)
-
 ## License
 MIT
 
