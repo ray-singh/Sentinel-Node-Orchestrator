@@ -91,6 +91,54 @@ class AsyncWorker:
             f"with agent type: {self.agent.agent_type}"
         )
     
+    def _add_tracing_attributes(self, **attributes):
+        """Safely add tracing attributes."""
+        try:
+            add_span_attributes(**attributes)
+        except Exception:
+            pass
+    
+    def _record_task_started(self, meta: TaskMetadata):
+        """Record task started metric."""
+        try:
+            from .metrics import TASKS_STARTED
+            TASKS_STARTED.labels(
+                tenant_id=meta.tenant_id,
+                agent_type=meta.agent_type,
+                task_type=meta.task_type
+            ).inc()
+        except Exception:
+            pass
+    
+    async def _enforce_rate_limit(self, tenant_id: str, tokens_needed: float = 1.0):
+        """Enforce rate limiting with automatic retry."""
+        rate_limit_key = f"tenant:{tenant_id}"
+        
+        allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
+            rate_limit_key, tokens=tokens_needed
+        )
+        
+        if not allowed:
+            logger.warning(
+                f"Rate limit exceeded for tenant {tenant_id}: "
+                f"retry after {retry_after_ms}ms"
+            )
+            await asyncio.sleep(retry_after_ms / 1000.0)
+            
+            # Retry once
+            allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
+                rate_limit_key, tokens=tokens_needed
+            )
+            if not allowed:
+                raise RuntimeError(
+                    f"Rate limit exceeded for tenant {tenant_id} after retry"
+                )
+        
+        logger.debug(
+            f"Rate limit check passed: tenant={tenant_id}, "
+            f"remaining={remaining:.2f} tokens"
+        )
+    
     async def start(self):
         """Start the worker and background tasks."""
         logger.info(f"Starting worker {self.worker_id}...")
@@ -240,42 +288,21 @@ class AsyncWorker:
         
         try:
             # Add tracing attributes
-            try:
-                add_span_attributes(
-                    task_id=task_id,
-                    worker_id=self.worker_id
-                )
-            except Exception:
-                pass
+            self._add_tracing_attributes(task_id=task_id, worker_id=self.worker_id)
             
-            try:
-                from .metrics import TASKS_STARTED, TASKS_COMPLETED, TASKS_FAILED
-            except Exception:
-                TASKS_STARTED = TASKS_COMPLETED = TASKS_FAILED = None
-            if TASKS_STARTED:
-                # Load metadata first to get labels
-                meta_temp = await self.saver.load_task_metadata(task_id)
-                if meta_temp:
-                    TASKS_STARTED.labels(
-                        tenant_id=meta_temp.tenant_id,
-                        agent_type=meta_temp.agent_type,
-                        task_type=meta_temp.task_type
-                    ).inc()
             # Load task metadata
             meta = await self.saver.load_task_metadata(task_id)
             if not meta:
                 logger.error(f"Task {task_id} metadata not found")
                 return
             
-            # Add more tracing attributes
-            try:
-                add_span_attributes(
-                    tenant_id=meta.tenant_id,
-                    agent_type=meta.agent_type,
-                    task_type=meta.task_type
-                )
-            except Exception:
-                pass
+            # Add detailed tracing and record metrics
+            self._add_tracing_attributes(
+                tenant_id=meta.tenant_id,
+                agent_type=meta.agent_type,
+                task_type=meta.task_type
+            )
+            self._record_task_started(meta)
             
             # Instantiate agent for this task based on metadata
             # Save old agent to restore later
@@ -464,39 +491,11 @@ class AsyncWorker:
         task_id = checkpoint.task_id
         started_at = datetime.utcnow()
         
-        logger.info(f"Node {node_id} executing with inputs: {prev_outputs}")
-        
         # For LLM nodes, enforce rate limit before execution
         if node_type in [NodeType.SEARCH, NodeType.ANALYZE, NodeType.SUMMARIZE]:
-            rate_limit_key = f"tenant:{meta.tenant_id}"
-            tokens_needed = 1.0  # 1 token per LLM call
-            
-            allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
-                rate_limit_key,
-                tokens=tokens_needed,
-            )
-            
-            if not allowed:
-                logger.warning(
-                    f"Rate limit exceeded for tenant {meta.tenant_id}: "
-                    f"retry after {retry_after_ms}ms"
-                )
-                # Sleep and retry
-                await asyncio.sleep(retry_after_ms / 1000.0)
-                # Try again
-                allowed, remaining, retry_after_ms = await self.rate_limiter.consume(
-                    rate_limit_key,
-                    tokens=tokens_needed,
-                )
-                if not allowed:
-                    raise RuntimeError(
-                        f"Rate limit still exceeded after retry for tenant {meta.tenant_id}"
-                    )
-            
-            logger.info(
-                f"Rate limit check passed: tenant={meta.tenant_id}, "
-                f"remaining={remaining:.2f} tokens"
-            )
+            await self._enforce_rate_limit(meta.tenant_id)
+        
+        logger.info(f"Node {node_id} executing with inputs: {prev_outputs}")
         
         # Create SideEffectManager for idempotent external effects
         effects_mgr = SideEffectManager(self.redis_client)

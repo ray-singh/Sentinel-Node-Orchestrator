@@ -4,6 +4,12 @@ High-availability, distributed AI agent orchestration system that closes the rel
 
 Sentinel ensures long-running, multi-step agent tasks survive worker crashes by checkpointing execution state to Redis and allowing other workers to resume from the last saved step. It also tracks LLM cost per call and provides primitives for rate-limiting.
 
+## Architecture Diagram
+
+![Sentinel architecture diagram](./sentinel_architecture_diagram.svg)
+
+Core flow: Client submits tasks to FastAPI, state is stored in Redis, workers claim/execute with checkpointing, and the watcher requeues work if a worker fails.
+
 ## Quick Start
 
 **One-line setup (Docker):**

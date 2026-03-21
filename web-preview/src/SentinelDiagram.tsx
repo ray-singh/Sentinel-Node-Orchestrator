@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
-import { Database, Server, Activity, AlertCircle, CheckCircle, Clock, DollarSign, Zap, ArrowRight, GitBranch, PlayCircle, PauseCircle, XCircle, Github } from 'lucide-react';
+import { 
+  Database, 
+  Server, 
+  Activity, 
+  AlertCircle, 
+  CheckCircle, 
+  DollarSign, 
+  Zap, 
+  ArrowRight, 
+  GitBranch, 
+  PlayCircle, 
+  PauseCircle, 
+  XCircle, 
+  Github 
+} from 'lucide-react';
 
 const SentinelDiagram = () => {
   const [activeState, setActiveState] = useState<string | null>(null);
