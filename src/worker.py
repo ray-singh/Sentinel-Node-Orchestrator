@@ -307,10 +307,9 @@ class AsyncWorker:
             # Instantiate agent for this task based on metadata
             # Save old agent to restore later
             old_agent = self.agent
-            try:
-                self.agent = create_agent(meta.agent_type)
-                await self.agent.initialize(meta)
-            
+            self.agent = create_agent(meta.agent_type)
+            await self.agent.initialize(meta)
+
             # Check for existing checkpoint (resume scenario)
             checkpoint = await self.saver.load_checkpoint(task_id)
             

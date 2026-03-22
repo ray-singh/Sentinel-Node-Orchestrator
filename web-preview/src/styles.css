@@ -1,2 +1,123 @@
+:root {
+	/* Palette */
+	--color-background-primary: #ffffff;
+	--color-background-secondary: #f7fafc;
+	--color-background-tertiary: #f3f6fb;
+
+	--color-text-primary: #0f1724;
+	--color-text-secondary: #475569;
+	--color-text-tertiary: #6b7280;
+	--color-text-danger: #b91c1c;
+
+	--color-border-tertiary: #e6edf3;
+	--color-border-primary: #dbeafe;
+	--color-border-info: #c7e0ff;
+	--color-background-info: #e6f2ff;
+	--color-background-danger: #fff1f2;
+
+	--border-radius-sm: 6px;
+	--border-radius-md: 8px;
+	--border-radius-lg: 12px;
+
+	--font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+
+	--shadow-sm: 0 1px 2px rgba(16,24,40,0.04);
+	--shadow-md: 0 6px 18px rgba(16,24,40,0.06);
+}
+
 html, body, #root { height: 100%; }
-body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+body {
+	margin: 0;
+	font-family: var(--font-sans);
+	background: var(--color-background-tertiary);
+	color: var(--color-text-primary);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Base elements */
+textarea, input, select, button {
+	font-family: inherit;
+	font-size: 13px;
+}
+
+textarea {
+	border: 1px solid var(--color-border-tertiary);
+	background: var(--color-background-primary);
+	padding: 8px 10px;
+	border-radius: var(--border-radius-md);
+	min-height: 72px;
+	resize: vertical;
+}
+
+input, select {
+	border: 1px solid var(--color-border-tertiary);
+	background: var(--color-background-primary);
+	padding: 7px 10px;
+	border-radius: var(--border-radius-sm);
+	box-sizing: border-box;
+}
+
+button {
+	border: none;
+	background: #378ADD;
+	color: white;
+	padding: 8px 12px;
+	border-radius: var(--border-radius-sm);
+	cursor: pointer;
+	transition: transform 0.08s ease, box-shadow 0.08s ease, opacity 0.12s;
+}
+
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn-ghost {
+	background: transparent;
+	color: var(--color-text-secondary);
+	border: 1px solid var(--color-border-tertiary);
+}
+
+/* Cards and containers */
+.card {
+	background: var(--color-background-primary);
+	border: 1px solid var(--color-border-tertiary);
+	border-radius: var(--border-radius-lg);
+	box-shadow: var(--shadow-sm);
+}
+
+.meta-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	color: var(--color-text-tertiary);
+}
+
+/* Status dot helper used by inline styles but handy for markup */
+.status-dot {
+	width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+}
+
+/* Empty state */
+.empty-state {
+	padding: 24px 20px; text-align: center; color: var(--color-text-tertiary);
+	background: var(--color-background-primary); border-radius: var(--border-radius-lg); border: 1px solid var(--color-border-tertiary);
+}
+
+/* Small utilities */
+.muted { color: var(--color-text-tertiary); }
+.mono { font-family: var(--font-mono); }
+
+/* Fancy scrollbar for panels */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: rgba(11, 32, 58, 0.08); border-radius: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Responsive tweaks */
+@media (max-width: 960px) {
+	.hide-on-mobile { display: none !important; }
+}
+
+/* Small animation for active pipeline dot used inline via animation name */
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+

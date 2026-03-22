@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import redis.asyncio as redis
 
@@ -78,6 +79,16 @@ app = FastAPI(
     title="Sentinel Node Orchestrator API",
     description="Fault-tolerant AI agent orchestration system",
     version="0.1.0",
+)
+
+# Allow CORS from common development origins (vite, localhost). Keep broad allowances
+# during local development so the web preview can hit the API without preflight errors.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Global state
