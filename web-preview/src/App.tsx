@@ -79,7 +79,8 @@ interface SubmitFormState {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://unlured-tearingly-alondra.ngrok-free.dev";
+const GITHUB_REPO = "https://github.com/ray-singh/Sentinel-Node-Orchestrator";
 const POLL_INTERVAL_MS = 3000;
 const NODE_SEQUENCE = ["start", "search", "analyze", "summarize", "complete"] as const;
 type NodeName = typeof NODE_SEQUENCE[number];
@@ -513,6 +514,25 @@ const DetailPanel: FC<DetailPanelProps> = ({ task }) => {
   );
 };
 
+const ApiUnreachableModal: FC<{ onRetry: () => void }> = ({ onRetry }) => (
+  <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(2,6,23,0.45)", zIndex: 9999 }}>
+    <div style={{ width: 480, background: "var(--color-background-primary)", borderRadius: "var(--border-radius-lg)", padding: 18, boxShadow: "var(--shadow-md)" }}>
+      <h3 style={{ margin: 0, fontSize: 16 }}>API Unreachable</h3>
+      <p style={{ marginTop: 8, color: "var(--color-text-secondary)" }}>
+        I turned the backend off to keep deployment costs down, so the dashboard can't reach it right now. I apologize for any inconvenience. 
+        You can view the source code and instructions in the GitHub repository below if you'd like to run it locally or deploy your own instance.
+      </p>
+      <p style={{ marginTop: 6 }}>
+        <a href={GITHUB_REPO} target="_blank" rel="noopener noreferrer" style={{ color: "#0b61d6" }}>Open repository on GitHub</a>
+      </p>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+        <button className="btn-ghost" onClick={onRetry} style={{ padding: "7px 12px" }}>Retry</button>
+        <button onClick={() => window.location.reload()} style={{ padding: "7px 12px" }}>Reload</button>
+      </div>
+    </div>
+  </div>
+);
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -788,6 +808,9 @@ export default function App() {
         </div>
 
       </div>
+      {apiOk === false && (
+        <ApiUnreachableModal onRetry={() => { checkHealth(); fetchTasks(); fetchStats(); }} />
+      )}
     </div>
   );
 }
