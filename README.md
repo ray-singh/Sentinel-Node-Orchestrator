@@ -4,6 +4,10 @@ High-availability, distributed AI agent orchestration system that closes the rel
 
 Sentinel ensures long-running, multi-step agent tasks survive worker crashes by checkpointing execution state to Redis and allowing other workers to resume from the last saved step. It also tracks LLM cost per call and provides primitives for rate-limiting.
 
+## Interactive Dashboard
+![Dashboard screenshot](./screenshot.png)
+The system includes a React-based interactive dashboard:
+
 ## Architecture Diagram
 
 ![Sentinel architecture diagram](./sentinel_architecture_diagram.svg)
@@ -270,10 +274,6 @@ All operations are automatically traced with OpenTelemetry:
 - LLM calls with token/cost attributes
 
 See [docs/observability.md](docs/observability.md) for detailed configuration.
-
-## Interactive Dashboard
-
-The system includes a React-based interactive dashboard with visual diagrams:
 
 ### Running the Dashboard
 
